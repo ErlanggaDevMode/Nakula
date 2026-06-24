@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }}</title>
+  <script src="{{ d3_cdn }}"></script>
+  <style>
+    /* ------------------------------------------------------------------ */
+    /* Reset & base                                                         */
+    /* ------------------------------------------------------------------ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      background: #f0f2f5;
+      color: #222;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Top bar                                                              */
+    /* ------------------------------------------------------------------ */
+    #topbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: #1f2937;
+      color: #f9fafb;
+      flex-shrink: 0;
+      z-index: 10;
+      box-shadow: 0 2px 6px rgba(0,0,0,.4);
+    }
+
+    #topbar h1 {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: .3px;
+      white-space: nowrap;
+    }
+
+    #search-input {
+      flex: 1;
+      max-width: 320px;
+      padding: 5px 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      background: #374151;
+      color: #f9fafb;
+    }
+    #search-input::placeholder { color: #9ca3af; }
+    #search-input:focus { background: #4b5563; }
+
+    #stats {
+      margin-left: auto;
+      font-size: 11px;
+      color: #9ca3af;
+      white-space: nowrap;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Zoom controls                                                         */
+    /* ------------------------------------------------------------------ */
+    #controls {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 20;
+    }
+
+    .ctrl-btn {
+      width: 34px;
+      height: 34px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,.15);
+      transition: background .15s;
+      user-select: none;
+    }
+    .ctrl-btn:hover { background: #f3f4f6; }
+
+    /* ------------------------------------------------------------------ */
+    /* Canvas                                                               */
+    /* ------------------------------------------------------------------ */
+    #canvas-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    svg#main-svg {
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+    svg#main-svg:active { cursor: grabbing; }
+
+    /* ------------------------------------------------------------------ */
+    /* Table nodes                                                          */
+    /* ------------------------------------------------------------------ */
+    .table-node { cursor: pointer; }
+
+    .table-header {
+      rx: 4;
+      ry: 4;
+    }
+
+    .table-title {
+      font-weight: 700;
+      font-size: 13px;
+      fill: #fff;
+      dominant-baseline: middle;
+    }
+
+    .col-row-bg {
+      fill: #f8f9fa;
+    }
+    .col-row-bg.even { fill: #eef0f3; }
+
+    .col-name {
+      font-size: 11px;
+      fill: #1f2937;
+      dominant-baseline: middle;
+    }
+    .col-name.pk {
+      font-weight: 700;
+      fill: #92400e;
+    }
+
+    .col-type {
+      font-size: 10px;
+      fill: #6b7280;
+      dominant-baseline: middle;
+    }
+
+    .table-border {
+      fill: none;
+      stroke: #cbd5e1;
+      stroke-width: 1.5;
+      rx: 4;
+      ry: 4;
+    }
+
+    /* Junction table – dashed border */
+    .junction .table-border {
+      stroke-dasharray: 5,3;
+      stroke: #9ca3af;
+    }
+    .junction .table-header { opacity: .8; }
+
+    /* Highlight when search matches */
+    .table-node.highlight .table-border {
+      stroke: #f59e0b;
+      stroke-width: 2.5;
+    }
+    .table-node.dimmed { opacity: .3; }
+
+    /* ------------------------------------------------------------------ */
+    /* Edges                                                                */
+    /* ------------------------------------------------------------------ */
+    .link {
+      fill: none;
+      stroke: #64748b;
+      stroke-width: 1.5;
+      marker-end: url(#arrowhead);
+    }
+    .link.many-to-many {
+      stroke-dasharray: 6,3;
+      stroke: #7c3aed;
+      marker-end: url(#arrowhead-m2m);
+      marker-start: url(#arrowhead-m2m);
+    }
+    .link:hover { stroke-width: 2.5; stroke: #1d4ed8; }
+
+    .link-label {
+      font-size: 9px;
+      fill: #374151;
+      text-anchor: middle;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Tooltip                                                              */
+    /* ------------------------------------------------------------------ */
+    #tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      max-width: 280px;
+      line-height: 1.5;
+      display: none;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(0,0,0,.3);
+    }
+    #tooltip strong { color: #fbbf24; }
+  </style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>🗄 {{ title }}</h1>
+  <input id="search-input" type="text" placeholder="Search tables…" autocomplete="off" />
+  <span id="stats"></span>
+</div>
+
+<div id="canvas-container">
+  <svg id="main-svg">
+    <defs>
+      <!-- Standard FK arrowhead (crow's foot style) -->
+      <marker id="arrowhead" markerWidth="10" markerHeight="7"
+              refX="9" refY="3.5" orient="auto">
+        <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+      </marker>
+      <!-- M:N arrowhead -->
+      <marker id="arrowhead-m2m" markerWidth="10" markerHeight="7"
+              refX="9" refY="3.5" orient="auto">
+        <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+      </marker>
+    </defs>
+
+    <g id="zoom-layer">
+      <g id="edges-layer"></g>
+      <g id="nodes-layer"></g>
+    </g>
+  </svg>
+
+  <div id="controls">
+    <div class="ctrl-btn" id="btn-zoom-in"  title="Zoom in">+</div>
+    <div class="ctrl-btn" id="btn-zoom-out" title="Zoom out">−</div>
+    <div class="ctrl-btn" id="btn-fit"      title="Fit to screen">⊡</div>
+  </div>
+
+  <div id="tooltip"></div>
+</div>
+
+<script>
+// ==========================================================================
+// Data injected by Python renderer
+// ==========================================================================
+const GRAPH_DATA = {{ graph_json }};
+
+// ==========================================================================
+// Layout constants
+// ==========================================================================
+const NODE_WIDTH    = 220;
+const ROW_HEIGHT    = 22;
+const HEADER_HEIGHT = 28;
+const COL_PADDING   = 8;
+const H_GAP         = 60;   // horizontal gap between columns of nodes
+const V_GAP         = 40;   // vertical gap between rows of nodes
+
+// ==========================================================================
+// Helpers
+// ==========================================================================
+function nodeHeight(node) {
+  return HEADER_HEIGHT + node.columns.length * ROW_HEIGHT;
+}
+
+// Simple greedy column-based layout.
+// Nodes are arranged in columns of ~5, then wrapped.
+function computeLayout(nodes) {
+  const PER_COL = Math.max(1, Math.ceil(Math.sqrt(nodes.length)));
+  let col = 0, row = 0, x = 0, y = 0;
+  let colMaxHeight = Array(Math.ceil(nodes.length / PER_COL)).fill(0);
+
+  nodes.forEach((n, i) => {
+    col = Math.floor(i / PER_COL);
+    row = i % PER_COL;
+
+    // x position: sum of all previous column widths + gaps
+    n.x = col * (NODE_WIDTH + H_GAP) + 20;
+
+    // y position: sum of heights of previous nodes in this column + gaps
+    const colNodes = nodes.filter((_, j) => Math.floor(j / PER_COL) === col && j < i);
+    n.y = colNodes.reduce((sum, cn) => sum + nodeHeight(cn) + V_GAP, 20);
+  });
+}
+
+// ==========================================================================
+// D3 setup
+// ==========================================================================
+const svg    = d3.select("#main-svg");
+const zoomG  = svg.select("#zoom-layer");
+const edgesG = svg.select("#edges-layer");
+const nodesG = svg.select("#nodes-layer");
+
+const zoom = d3.zoom()
+  .scaleExtent([0.05, 4])
+  .on("zoom", e => zoomG.attr("transform", e.transform));
+
+svg.call(zoom);
+
+// ==========================================================================
+// Layout
+// ==========================================================================
+const nodes = GRAPH_DATA.nodes;
+const edges = GRAPH_DATA.edges;
+
+computeLayout(nodes);
+
+// Build lookup: node id → node
+const nodeById = {};
+nodes.forEach(n => { nodeById[n.id] = n; });
+
+// ==========================================================================
+// Draw edges
+// ==========================================================================
+const linkSel = edgesG.selectAll("g.link-group")
+  .data(edges)
+  .join("g")
+  .attr("class", "link-group");
+
+linkSel.append("path")
+  .attr("class", d => "link" + (d.is_many_to_many ? " many-to-many" : ""))
+  .attr("d", edgePath);
+
+linkSel.filter(d => d.label && d.label.length > 0)
+  .append("text")
+  .attr("class", "link-label")
+  .attr("dy", -4)
+  .text(d => d.label)
+  .attr("transform", d => {
+    const src = nodeById[d.source];
+    const tgt = nodeById[d.target];
+    if (!src || !tgt) return "";
+    const mx = (src.x + NODE_WIDTH + tgt.x) / 2;
+    const my = (src.y + nodeHeight(src) / 2 + tgt.y + nodeHeight(tgt) / 2) / 2;
+    return `translate(${mx},${my})`;
+  });
+
+function edgePath(d) {
+  const src = nodeById[d.source];
+  const tgt = nodeById[d.target];
+  if (!src || !tgt) return "";
+
+  // Connect right-centre of source to left-centre of target
+  const x1 = src.x + NODE_WIDTH;
+  const y1 = src.y + HEADER_HEIGHT / 2;
+  const x2 = tgt.x;
+  const y2 = tgt.y + HEADER_HEIGHT / 2;
+
+  // If source is to the right of target, flip
+  if (x1 > x2) {
+    const cx = (x1 + x2) / 2;
+    return `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+  }
+  const cx = (x1 + x2) / 2;
+  return `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+}
+
+// ==========================================================================
+// Draw nodes
+// ==========================================================================
+const nodeSel = nodesG.selectAll("g.table-node")
+  .data(nodes, d => d.id)
+  .join("g")
+  .attr("class", d => "table-node" + (d.is_junction ? " junction" : ""))
+  .attr("transform", d => `translate(${d.x},${d.y})`)
+  .call(
+    d3.drag()
+      .on("start", function () { d3.select(this).raise(); })
+      .on("drag", function (event, d) {
+        d.x = event.x - NODE_WIDTH / 2;
+        d.y = event.y - nodeHeight(d) / 2;
+        d3.select(this).attr("transform", `translate(${d.x},${d.y})`);
+        // Redraw edges
+        linkSel.select("path").attr("d", edgePath);
+        linkSel.select("text").attr("transform", d2 => {
+          const src = nodeById[d2.source];
+          const tgt = nodeById[d2.target];
+          if (!src || !tgt) return "";
+          const mx = (src.x + NODE_WIDTH + tgt.x) / 2;
+          const my = (src.y + nodeHeight(src) / 2 + tgt.y + nodeHeight(tgt) / 2) / 2;
+          return `translate(${mx},${my})`;
+        });
+      })
+  );
+
+// Background / border rect
+nodeSel.append("rect")
+  .attr("class", "table-border")
+  .attr("width", NODE_WIDTH)
+  .attr("height", d => nodeHeight(d));
+
+// Header background
+nodeSel.append("rect")
+  .attr("class", "table-header")
+  .attr("width", NODE_WIDTH)
+  .attr("height", HEADER_HEIGHT)
+  .attr("fill", d => d.header_color || "#4A90D9")
+  .attr("rx", 3)
+  .attr("ry", 3);
+
+// Header title
+nodeSel.append("text")
+  .attr("class", "table-title")
+  .attr("x", COL_PADDING)
+  .attr("y", HEADER_HEIGHT / 2)
+  .text(d => d.label);
+
+// Column rows
+nodeSel.each(function (nodeData) {
+  const g = d3.select(this);
+  nodeData.columns.forEach((col, i) => {
+    const y = HEADER_HEIGHT + i * ROW_HEIGHT;
+    const isEven = i % 2 === 0;
+
+    g.append("rect")
+      .attr("class", "col-row-bg" + (isEven ? "" : " even"))
+      .attr("x", 0)
+      .attr("y", y)
+      .attr("width", NODE_WIDTH)
+      .attr("height", ROW_HEIGHT);
+
+    const nameText = (col.is_primary_key ? "🔑 " : "") + col.name;
+    g.append("text")
+      .attr("class", "col-name" + (col.is_primary_key ? " pk" : ""))
+      .attr("x", COL_PADDING)
+      .attr("y", y + ROW_HEIGHT / 2)
+      .text(nameText);
+
+    g.append("text")
+      .attr("class", "col-type")
+      .attr("x", NODE_WIDTH - COL_PADDING)
+      .attr("y", y + ROW_HEIGHT / 2)
+      .attr("text-anchor", "end")
+      .text(col.data_type);
+  });
+});
+
+// Tooltip on hover
+const tooltip = document.getElementById("tooltip");
+nodeSel
+  .on("mouseover", function (event, d) {
+    const fkCount = edges.filter(e => e.source === d.id || e.target === d.id).length;
+    tooltip.innerHTML =
+      `<strong>${d.label}</strong><br/>` +
+      `Schema: ${d.schema || "(default)"}<br/>` +
+      `Columns: ${d.columns.length}<br/>` +
+      `Relationships: ${fkCount}` +
+      (d.is_junction ? "<br/><em>Junction table</em>" : "");
+    tooltip.style.display = "block";
+  })
+  .on("mousemove", function (event) {
+    const rect = document.getElementById("canvas-container").getBoundingClientRect();
+    tooltip.style.left = (event.clientX - rect.left + 14) + "px";
+    tooltip.style.top  = (event.clientY - rect.top  + 14) + "px";
+  })
+  .on("mouseleave", function () {
+    tooltip.style.display = "none";
+  });
+
+// ==========================================================================
+// Stats bar
+// ==========================================================================
+document.getElementById("stats").textContent =
+  `${nodes.length} tables · ${edges.length} relationships`;
+
+// ==========================================================================
+// Search
+// ==========================================================================
+document.getElementById("search-input").addEventListener("input", function () {
+  const q = this.value.trim().toLowerCase();
+  if (!q) {
+    nodeSel.classed("highlight", false).classed("dimmed", false);
+    return;
+  }
+  nodeSel.each(function (d) {
+    const matches = d.label.toLowerCase().includes(q);
+    d3.select(this).classed("highlight", matches).classed("dimmed", !matches);
+  });
+});
+
+// ==========================================================================
+// Zoom controls
+// ==========================================================================
+document.getElementById("btn-zoom-in").addEventListener("click", () => {
+  svg.transition().call(zoom.scaleBy, 1.3);
+});
+document.getElementById("btn-zoom-out").addEventListener("click", () => {
+  svg.transition().call(zoom.scaleBy, 0.75);
+});
+document.getElementById("btn-fit").addEventListener("click", fitScreen);
+
+function fitScreen() {
+  const ctr = document.getElementById("canvas-container");
+  const W = ctr.clientWidth;
+  const H = ctr.clientHeight;
+
+  if (!nodes.length) return;
+
+  const xs = nodes.map(n => n.x);
+  const ys = nodes.map(n => n.y);
+  const x2s = nodes.map(n => n.x + NODE_WIDTH);
+  const y2s = nodes.map(n => n.y + nodeHeight(n));
+
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...x2s);
+  const maxY = Math.max(...y2s);
+
+  const gw = maxX - minX;
+  const gh = maxY - minY;
+  const scale = Math.min(0.95 * W / gw, 0.95 * H / gh, 2);
+  const tx = (W - scale * gw) / 2 - scale * minX;
+  const ty = (H - scale * gh) / 2 - scale * minY;
+
+  svg.transition().duration(600).call(
+    zoom.transform,
+    d3.zoomIdentity.translate(tx, ty).scale(scale)
+  );
+}
+
+// Initial fit
+setTimeout(fitScreen, 100);
+</script>
+</body>
+</html>
