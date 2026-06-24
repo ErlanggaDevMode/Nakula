@@ -252,11 +252,14 @@
   <div id="tooltip"></div>
 </div>
 
+<!-- Graph data injected by Jinja2 – parsed at runtime, not by the JS editor -->
+<script type="application/json" id="graph-data">{{ graph_json }}</script>
+
 <script>
 // ==========================================================================
 // Data injected by Python renderer
 // ==========================================================================
-const GRAPH_DATA = {{ graph_json }};
+const GRAPH_DATA = JSON.parse(document.getElementById("graph-data").textContent);
 
 // ==========================================================================
 // Layout constants
