@@ -3,17 +3,17 @@ CLI entry point for DB Schema Visualizer.
 
 Usage examples::
 
-    # SQLite → PNG
-    dbviz extract -d sqlite:///mydb.db -o diagram.png -f png
+    # Minimal – just the DB URL, outputs erd.png
+    dbviz extract -d sqlite:///mydb.db
 
-    # PostgreSQL → interactive HTML, only public schema
-    dbviz extract -d postgresql://user:pw@host/mydb -o erd.html -f html --schema public
+    # Output format inferred from extension
+    dbviz extract -d sqlite:///mydb.db -o diagram.html
+    dbviz extract -d sqlite:///mydb.db -o diagram.svg
 
-    # Filter to specific tables, collapse M:N junctions
-    dbviz extract -d sqlite:///mydb.db -o erd -f svg \\
-        --tables users --tables orders --no-many-to-many
+    # PostgreSQL, public schema only
+    dbviz extract -d postgresql://user:pw@host/mydb -o erd.html --schema public
 
-    # Show DOT source without rendering
+    # Show DOT source
     dbviz dot -d sqlite:///mydb.db
 """
 
@@ -72,18 +72,20 @@ def cli() -> None:
 )
 @click.option(
     "-o", "--output",
-    required=True,
+    default="erd",
+    show_default=True,
     metavar="PATH",
-    help="Output file path.  The correct extension is appended automatically "
-         "when missing (e.g. 'diagram' → 'diagram.png').",
+    help="Output file path. Format is inferred from the extension "
+         "(e.g. diagram.html → HTML, diagram.svg → SVG). "
+         "Use -f to override.",
 )
 @click.option(
     "-f", "--format",
     "fmt",
     type=click.Choice(["png", "svg", "pdf", "html"], case_sensitive=False),
-    default="png",
-    show_default=True,
-    help="Output format.",
+    default=None,
+    help="Output format (png/svg/pdf/html). "
+         "Inferred from -o extension when omitted; falls back to png.",
 )
 @click.option(
     "--schema",
@@ -139,7 +141,7 @@ def cli() -> None:
 def extract(
     db: str,
     output: str,
-    fmt: str,
+    fmt: Optional[str],
     schemas: Tuple[str, ...],
     tables: Tuple[str, ...],
     exclude_tables: Tuple[str, ...],
@@ -152,6 +154,12 @@ def extract(
     """Extract schema metadata and generate an ERD diagram."""
     _setup_logging(verbose)
     logger = logging.getLogger(__name__)
+
+    # Infer format from output extension when -f is not given
+    _ext_to_fmt = {"png": "png", "svg": "svg", "pdf": "pdf", "html": "html"}
+    if fmt is None:
+        ext = output.rsplit(".", 1)[-1].lower() if "." in output else ""
+        fmt = _ext_to_fmt.get(ext, "png")  # default to png
 
     # -- 1. Extract ----------------------------------------------------------
     click.echo(f"Connecting to database…")
